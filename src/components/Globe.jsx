@@ -4,7 +4,7 @@ import mapboxgl from 'mapbox-gl';
 import { createRoot } from 'react-dom/client';
 import CCTVPopup from './CCTVPopup';
 
-mapboxgl.accessToken = 'pk.eyJ1Ijoibm9veHJpaSIsImEiOiJjbXBidGdubnEwMTNrMnJzYjFqc2ltOTg2In0.8N9W8DrKzdOgX6Om9DFLFQ';
+mapboxgl.accessToken = import.meta.env.VITE_MAPBOX_TOKEN;
 
 const CLUSTER_MAX_ZOOM = 14;
 const CLUSTER_RADIUS = 50;
