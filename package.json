@@ -1,0 +1,25 @@
+{
+  "name": "nooXCCTV",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "mapbox-gl": "^3.4.0",
+    "react": "^18.3.0",
+    "react-dom": "^18.3.0",
+    "video.js": "^8.17.0",
+    "videojs-contrib-hls": "^5.15.0",
+    "@videojs/http-streaming": "^3.13.0"
+  },
+  "devDependencies": {
+    "@types/react": "^18.3.0",
+    "@types/react-dom": "^18.3.0",
+    "@vitejs/plugin-react": "^4.3.0",
+    "vite": "^5.4.0"
+  }
+}
