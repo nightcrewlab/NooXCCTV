@@ -17,7 +17,7 @@ function Clock() {
   return <span className="hud-time">{time}</span>;
 }
 
-export function HUDHeader({ cameraCount, countryCount }) {
+export function HUDHeader({ cameraCount, countryCount, onOpenSettings }) {
   return (
     <header className="hud-header">
       <div className="hud-logo">
@@ -43,6 +43,15 @@ export function HUDHeader({ cameraCount, countryCount }) {
           <span className="hud-stat-label">STATUS</span>
         </div>
         <Clock />
+
+        {/* Settings / Ayarlar butonu */}
+        <button 
+          className="hud-settings-btn" 
+          onClick={onOpenSettings}
+          title="Ayarlar — Özel YouTube Kameraları Ekle"
+        >
+          ⚙
+        </button>
       </div>
     </header>
   );
@@ -54,16 +63,16 @@ export function SidePanel() {
       <div className="panel-block">
         <div className="panel-title">// LEGEND</div>
         <div className="legend-item">
-          <div className="legend-dot live" />
-          <span>HLS Stream</span>
-        </div>
-        <div className="legend-item">
           <div className="legend-dot youtube" />
           <span>YouTube Live</span>
         </div>
         <div className="legend-item">
           <div className="legend-dot cluster" />
           <span>Cluster</span>
+        </div>
+        <div className="legend-item" style={{opacity: 0.6}}>
+          <div className="legend-dot" style={{background: '#00ff88'}} />
+          <span>Custom (Senin Eklediklerin)</span>
         </div>
       </div>
 

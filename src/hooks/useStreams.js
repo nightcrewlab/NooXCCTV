@@ -4,6 +4,40 @@
 
 import { useState, useEffect } from 'react';
 
+// Custom cameras (user added via Settings) — read directly from localStorage
+const CUSTOM_STORAGE_KEY = 'nooxcctv_custom_cameras_v1';
+
+function loadCustomCamerasAsFeatures() {
+  try {
+    const raw = localStorage.getItem(CUSTOM_STORAGE_KEY);
+    if (!raw) return [];
+    const list = JSON.parse(raw);
+    if (!Array.isArray(list)) return [];
+
+    return list.map((cam, i) => ({
+      type: 'Feature',
+      geometry: { type: 'Point', coordinates: [Number(cam.lng), Number(cam.lat)] },
+      properties: {
+        id: cam.id || `custom-${i}`,
+        name: cam.name || 'Custom Camera',
+        fullName: cam.name || '',
+        url: cam.embedUrl || cam.url,
+        embedType: 'youtube',
+        ytId: cam.ytId || null,
+        country: cam.country || 'XX',
+        environment: 'custom',
+        sceneType: 'user-added',
+        sourceFamily: 'user-custom',
+        status: 'custom',
+        qualityTier: 'user',
+        addedAt: cam.addedAt
+      }
+    }));
+  } catch {
+    return [];
+  }
+}
+
 const MASTER_URL =
   'https://raw.githubusercontent.com/willytop8/Live-Environment-Streams/main/streams.geojson';
 
@@ -30,6 +64,122 @@ const CENTROIDS = {
   TZ:[34.89,-6.37],US:[-95.71,37.09],UY:[-55.77,-32.52],VE:[-66.59,6.42],
   VI:[-64.90,18.34],VN:[108.28,14.06],ZA:[22.94,-30.56],ZM:[27.85,-13.13]
 };
+
+// Curated high-quality YouTube live cameras we ALWAYS want visible on the globe
+// (especially the new US + Japan ones you requested). Injected on top of main data.
+const CURATED_LIVE_CAMERAS = [
+  // America (US)
+  { name:'Las Vegas Strip',            lat:36.1147, lng:-115.1728, url:'https://www.youtube.com/embed/XX7Gpd9T8Zo?autoplay=1&mute=1',  country:'US' },
+  { name:'Hollywood Walk of Fame',     lat:34.1016, lng:-118.3267, url:'https://www.youtube.com/embed/lqZvHM9mYEo?autoplay=1&mute=1',  country:'US' },
+  { name:'Chicago Skydeck (Willis)',   lat:41.8789, lng:-87.6359,  url:'https://www.youtube.com/embed/O0UGT7AT3aw?autoplay=1&mute=1',  country:'US' },
+  { name:'Miami South Beach',          lat:25.7907, lng:-80.1300,  url:'https://www.youtube.com/embed/lVkJlng3nSs?autoplay=1&mute=1',  country:'US' },
+  { name:'New Orleans Bourbon Street', lat:29.9580, lng:-90.0650,  url:'https://www.youtube.com/embed/Ksrleaxxxhw?autoplay=1&mute=1',  country:'US' },
+  { name:'Nashville Lower Broadway',   lat:36.1627, lng:-86.7762,  url:'https://www.youtube.com/embed/h5Grd2w7HQM?autoplay=1&mute=1',  country:'US' },
+  // Japan
+  { name:'Tokyo Shinjuku Kabukicho',   lat:35.6938, lng:139.7035,  url:'https://www.youtube.com/embed/ErHJBXTmm2Q?autoplay=1&mute=1',  country:'JP' },
+  { name:'Tokyo Shinjuku Street 24H',  lat:35.6896, lng:139.7006,  url:'https://www.youtube.com/embed/DjdUEyjx8GM?autoplay=1&mute=1',  country:'JP' },
+  { name:'Tokyo Shibuya ANN Live',     lat:35.6590, lng:139.7008,  url:'https://www.youtube.com/embed/8H3nRCFVR6Y?autoplay=1&mute=1',  country:'JP' },
+  { name:'Tokyo Shibuya Sky View',     lat:35.6580, lng:139.7015,  url:'https://www.youtube.com/embed/3Q5wZeTuttw?autoplay=1&mute=1',  country:'JP' },
+  { name:'Osaka Dotonbori 24H',        lat:34.6687, lng:135.5013,  url:'https://www.youtube.com/embed/2HyOMbgYgEQ?autoplay=1&mute=1',  country:'JP' },
+];
+
+function injectCuratedCameras(base) {
+  if (!base?.features) return base;
+
+  const seen = new Set(
+    base.features.map(f => {
+      const [lng, lat] = f.geometry?.coordinates || [];
+      return `${f.properties?.name || ''}|${(+lng).toFixed(2)}|${(+lat).toFixed(2)}`;
+    })
+  );
+
+  const additions = [];
+  CURATED_LIVE_CAMERAS.forEach((cam, idx) => {
+    const key = `${cam.name}|${cam.lng.toFixed(2)}|${cam.lat.toFixed(2)}`;
+    if (seen.has(key)) return;
+
+    additions.push({
+      type: 'Feature',
+      geometry: { type: 'Point', coordinates: [cam.lng, cam.lat] },
+      properties: {
+        id: `curated-${idx}`,
+        name: cam.name,
+        fullName: cam.name,
+        url: cam.url,
+        embedType: 'youtube',
+        ytId: null,
+        country: cam.country,
+        environment: 'urban',
+        sceneType: 'street',
+        sourceFamily: 'youtube-curated',
+        status: 'curated',
+        qualityTier: 'good'
+      }
+    });
+    seen.add(key);
+  });
+
+  if (additions.length === 0) return base;
+
+  return {
+    ...base,
+    features: [...base.features, ...additions],
+    meta: {
+      ...(base.meta || {}),
+      curatedAdded: additions.length,
+      totalWithCurated: base.features.length + additions.length
+    }
+  };
+}
+
+function injectCustomCameras(base) {
+  const customs = loadCustomCamerasAsFeatures();
+  if (!customs.length || !base?.features) return base;
+
+  const seen = new Set(
+    base.features.map(f => {
+      const [lng, lat] = f.geometry?.coordinates || [];
+      return `${f.properties?.name || ''}|${(+lng).toFixed(2)}|${(+lat).toFixed(2)}`;
+    })
+  );
+
+  const additions = customs.filter(cam => {
+    const [lng, lat] = cam.geometry.coordinates;
+    const key = `${cam.properties.name}|${(+lng).toFixed(2)}|${(+lat).toFixed(2)}`;
+    return !seen.has(key);
+  });
+
+  if (!additions.length) return base;
+
+  return {
+    ...base,
+    features: [...base.features, ...additions],
+    meta: {
+      ...(base.meta || {}),
+      customAdded: additions.length,
+      totalWithCustom: base.features.length + additions.length
+    }
+  };
+}
+
+function filterYouTubeOnly(geojson) {
+  if (!geojson?.features) return geojson;
+  const youtubeOnly = geojson.features.filter(f => {
+    const et = f.properties?.embedType;
+    const url = f.properties?.url || '';
+    return et === 'youtube' || url.includes('youtube.com/embed/');
+  });
+  return {
+    ...geojson,
+    features: youtubeOnly,
+    meta: {
+      ...(geojson.meta || {}),
+      filteredToYouTube: true,
+      originalCount: geojson.features.length,
+      youtubeCount: youtubeOnly.length
+    }
+  };
+}
 
 function jitter(v, amt = 1.5) {
   return v + (Math.random() - 0.5) * amt;
@@ -149,7 +299,7 @@ export function useStreams() {
     let cancelled = false;
 
     async function load() {
-      // 1. Try master geojson directly from GitHub (no CORS issues, public raw URL)
+      // 1. Try master geojson directly from GitHub
       try {
         console.log('[useStreams] Fetching', MASTER_URL);
         const res = await fetch(MASTER_URL, {
@@ -162,8 +312,14 @@ export function useStreams() {
           console.log('[useStreams] master response first 100 chars:', text.slice(0, 100));
           const raw = JSON.parse(text);
           if (raw?.features?.length && !cancelled) {
-            const processed = processRaw(raw);
-            console.log('[useStreams] processed:', processed.features.length, 'features');
+            let processed = processRaw(raw);
+            processed = injectCuratedCameras(processed);
+            processed = injectCustomCameras(processed);
+            processed = filterYouTubeOnly(processed);
+            const curated = processed.meta?.curatedAdded || 0;
+            const custom = processed.meta?.customAdded || 0;
+            console.log('[useStreams] processed:', processed.features.length, 'YouTube features', 
+              (curated || custom) ? `(+${curated} curated, +${custom} custom)` : '');
             setGeojson(processed);
             setCount(processed.features.length);
             setMeta(processed.meta);
@@ -175,16 +331,22 @@ export function useStreams() {
         console.warn('[useStreams] master geojson failed:', e.message);
       }
 
-      // 2. Try Vercel /api/streams (only works when deployed on Vercel)
+      // 2. Try Vercel /api/streams
       try {
         const res = await fetch('/api/streams', { signal: AbortSignal.timeout(15000) });
         const contentType = res.headers.get('content-type') || '';
         if (res.ok && contentType.includes('application/json')) {
           const raw = await res.json();
           if (raw?.features?.length && !cancelled) {
-            setGeojson(raw);
-            setCount(raw.features.length);
-            setMeta(raw.meta || null);
+            let withCurated = injectCuratedCameras(raw);
+            withCurated = injectCustomCameras(withCurated);
+            withCurated = filterYouTubeOnly(withCurated);
+            const curated = withCurated.meta?.curatedAdded || 0;
+            const custom = withCurated.meta?.customAdded || 0;
+            setGeojson(withCurated);
+            setCount(withCurated.features.length);
+            setMeta(withCurated.meta || null);
+            if (curated || custom) console.log('[useStreams] /api +', curated, 'curated,', custom, 'custom');
             setLoading(false);
             return;
           }
@@ -195,10 +357,12 @@ export function useStreams() {
         console.warn('[useStreams] /api/streams failed:', e.message);
       }
 
-      // 3. Hardcoded fallback
+      // 3. Hardcoded fallback (YouTube only)
       if (!cancelled) {
-        console.warn('[useStreams] Using hardcoded fallback (20 cameras)');
-        const fb = buildFallback();
+        console.warn('[useStreams] Using hardcoded fallback (YouTube only)');
+        let fb = buildFallback();
+        fb = injectCustomCameras(fb);
+        fb = filterYouTubeOnly(fb);
         setGeojson(fb);
         setCount(fb.features.length);
         setLoading(false);
@@ -206,13 +370,27 @@ export function useStreams() {
     }
 
     load();
-    return () => { cancelled = true; };
+
+    // Live update when user adds/removes custom cameras from Settings
+    const onCustomChange = () => {
+      if (!cancelled) {
+        console.log('[useStreams] Custom cameras changed — refreshing map data');
+        load();
+      }
+    };
+    window.addEventListener('custom-cameras-changed', onCustomChange);
+
+    return () => {
+      cancelled = true;
+      window.removeEventListener('custom-cameras-changed', onCustomChange);
+    };
   }, []);
 
   return { geojson, loading, error, count, meta };
 }
 
 function buildFallback() {
+  // Hardcoded high-quality YouTube + Skyline fallbacks (exact coords, grouped by country)
   const streams = [
     { name:'Times Square NYC',      lat:40.7580,  lng:-73.9855, url:'https://www.youtube.com/embed/5rnlWnQEQ6Y?autoplay=1&mute=1',  country:'US' },
     { name:'Tokyo Shibuya',         lat:35.6595,  lng:139.7004, url:'https://www.youtube.com/embed/zQNHiNsFVdg?autoplay=1&mute=1',  country:'JP' },
@@ -231,9 +409,22 @@ function buildFallback() {
     { name:'Mumbai Marine Drive',   lat:18.9442,  lng:72.8235,  url:'https://www.youtube.com/embed/E8yCJVo5KJ0?autoplay=1&mute=1',  country:'IN' },
     { name:'Cape Town Waterfront',  lat:-33.9040, lng:18.4196,  url:'https://www.youtube.com/embed/PbqNl_4IkEw?autoplay=1&mute=1',  country:'ZA' },
     { name:'Niagara Falls',         lat:43.0799,  lng:-79.0747, url:'https://www.youtube.com/embed/tnxGp8Y9HG8?autoplay=1&mute=1',  country:'CA' },
-    { name:'Istanbul Golden Horn',  lat:41.0150,  lng:28.9500,  url:'https://www.skylinewebcams.com/en/webcam/turkey/marmara/istanbul/golden-horn.html', country:'TR' },
-    { name:'Paris Eiffel Tower',    lat:48.8600,  lng:2.2960,   url:'https://www.skylinewebcams.com/en/webcam/france/ile-de-france/paris/eiffel-tower.html', country:'FR' },
-    { name:'Barcelona Beach',       lat:41.3851,  lng:2.1734,   url:'https://www.skylinewebcams.com/en/webcam/spain/catalonia/barcelona/barceloneta-beach.html', country:'ES' },
+    // Skyline entries removed - only pure YouTube live streams kept per user request
+
+    // ── NEW ADDITIONS: United States (America) major live spots ──────────────
+    { name:'Las Vegas Strip',            lat:36.1147, lng:-115.1728, url:'https://www.youtube.com/embed/XX7Gpd9T8Zo?autoplay=1&mute=1',  country:'US' },
+    { name:'Hollywood Walk of Fame',     lat:34.1016, lng:-118.3267, url:'https://www.youtube.com/embed/lqZvHM9mYEo?autoplay=1&mute=1',  country:'US' },
+    { name:'Chicago Skydeck (Willis)',   lat:41.8789, lng:-87.6359,  url:'https://www.youtube.com/embed/O0UGT7AT3aw?autoplay=1&mute=1',  country:'US' },
+    { name:'Miami South Beach',          lat:25.7907, lng:-80.1300,  url:'https://www.youtube.com/embed/lVkJlng3nSs?autoplay=1&mute=1',  country:'US' },
+    { name:'New Orleans Bourbon Street', lat:29.9580, lng:-90.0650,  url:'https://www.youtube.com/embed/Ksrleaxxxhw?autoplay=1&mute=1',  country:'US' },
+    { name:'Nashville Lower Broadway',   lat:36.1627, lng:-86.7762,  url:'https://www.youtube.com/embed/h5Grd2w7HQM?autoplay=1&mute=1',  country:'US' },
+
+    // ── NEW ADDITIONS: Japan (Tokyo + Osaka iconic live cams) ────────────────
+    { name:'Tokyo Shinjuku Kabukicho',   lat:35.6938, lng:139.7035,  url:'https://www.youtube.com/embed/ErHJBXTmm2Q?autoplay=1&mute=1',  country:'JP' },
+    { name:'Tokyo Shinjuku Street 24H',  lat:35.6896, lng:139.7006,  url:'https://www.youtube.com/embed/DjdUEyjx8GM?autoplay=1&mute=1',  country:'JP' },
+    { name:'Tokyo Shibuya ANN Live',     lat:35.6590, lng:139.7008,  url:'https://www.youtube.com/embed/8H3nRCFVR6Y?autoplay=1&mute=1',  country:'JP' },
+    { name:'Tokyo Shibuya Sky View',     lat:35.6580, lng:139.7015,  url:'https://www.youtube.com/embed/3Q5wZeTuttw?autoplay=1&mute=1',  country:'JP' },
+    { name:'Osaka Dotonbori 24H',        lat:34.6687, lng:135.5013,  url:'https://www.youtube.com/embed/2HyOMbgYgEQ?autoplay=1&mute=1',  country:'JP' },
   ];
   return {
     type: 'FeatureCollection',

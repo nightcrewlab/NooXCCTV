@@ -110,13 +110,22 @@ export default async function handler(req, res) {
 
     if (masterRes.ok) {
       const raw = await masterRes.json();
-      const features = normalizeFeatures(raw.features || []);
+      let features = normalizeFeatures(raw.features || []);
+
+      // Only YouTube live streams (user request)
+      features = features.filter(f => {
+        const et = f.properties?.embedType;
+        const url = f.properties?.url || '';
+        return et === 'youtube' || url.includes('youtube.com/embed/');
+      });
+
       return res.status(200).json({
         type: 'FeatureCollection',
         features,
         meta: {
           total: features.length,
           source: 'master-geojson',
+          filteredToYouTube: true,
           generated: new Date().toISOString()
         }
       });
@@ -134,7 +143,15 @@ export default async function handler(req, res) {
     results.forEach(arr => allFeatures.push(...arr));
   }
 
-  const features = normalizeFeatures(allFeatures);
+  let features = normalizeFeatures(allFeatures);
+
+  // Only YouTube live streams (user request - remove Skyline, HLS, webpage)
+  features = features.filter(f => {
+    const et = f.properties?.embedType;
+    const url = f.properties?.url || '';
+    return et === 'youtube' || url.includes('youtube.com/embed/');
+  });
+
   return res.status(200).json({
     type: 'FeatureCollection',
     features,
@@ -142,6 +159,7 @@ export default async function handler(req, res) {
       total: features.length,
       countries: COUNTRY_CODES.length,
       source: 'per-country',
+      filteredToYouTube: true,
       generated: new Date().toISOString()
     }
   });

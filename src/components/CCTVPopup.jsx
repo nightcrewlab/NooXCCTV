@@ -1,8 +1,8 @@
 // src/components/CCTVPopup.jsx
 // Handles 3 embed types: 'youtube' | 'hls' | 'webpage'
-// Supports multi-camera listings. If unavailable, suggests opening in new tab.
+// For 'webpage' type, auto-calls /api/resolve to extract the real stream URL.
 
-import { useEffect, useRef, useState, useCallback } from 'react';
+import { useEffect, useRef, useState } from 'react';
 
 const FLAG_MAP = {
   US:'🇺🇸',GB:'🇬🇧',FR:'🇫🇷',DE:'🇩🇪',JP:'🇯🇵',CN:'🇨🇳',AU:'🇦🇺',CA:'🇨🇦',
@@ -22,8 +22,8 @@ function formatCoords(lng, lat) {
   return `${la} ${lo}`;
 }
 
-function getOpenUrl(props, ytId) {
-  if (props.embedType === 'youtube' && ytId) return `https://www.youtube.com/watch?v=${ytId}`;
+function getOpenUrl(props) {
+  if (props.embedType === 'youtube' && props.ytId) return `https://www.youtube.com/watch?v=${props.ytId}`;
   return props.url;
 }
 
@@ -31,11 +31,10 @@ function getTypeBadge(embedType) {
   if (embedType === 'youtube') return 'YOUTUBE';
   if (embedType === 'hls') return 'HLS';
   if (embedType === 'webpage') return 'WEBCAM';
-  if (embedType === 'multi') return 'MULTI-CAM';
   return 'STREAM';
 }
 
-// YouTube embed
+// ─── YouTube embed ─────────────────────────────────────────
 function YouTubeEmbed({ url, onLoad }) {
   return (
     <div className="popup-media-area">
@@ -52,14 +51,14 @@ function YouTubeEmbed({ url, onLoad }) {
   );
 }
 
-// SkylineWebcams / generic webpage embed (fallback)
+// ─── SkylineWebcams / generic webpage embed ────────────────
 function WebpageEmbed({ url, onLoad }) {
   return (
     <div className="popup-media-area">
       <iframe
         src={url}
-        sandbox="allow-scripts allow-same-origin allow-popups allow-forms"
-        allow="autoplay; fullscreen"
+        sandbox="allow-scripts allow-same-origin allow-popups"
+        allow="autoplay"
         onLoad={onLoad}
         style={{ position:'absolute', inset:0, width:'100%', height:'100%', border:'none', background:'#000' }}
       />
@@ -67,7 +66,7 @@ function WebpageEmbed({ url, onLoad }) {
   );
 }
 
-// HLS stream
+// ─── HLS stream with Video.js ───────────────────────────────
 function HLSEmbed({ url, onStatus }) {
   const videoRef = useRef(null);
   const playerRef = useRef(null);
@@ -102,13 +101,15 @@ function HLSEmbed({ url, onStatus }) {
   );
 }
 
-// Resolver
+// ─── Resolver: turns a webpage URL into a real stream ──────
+// Calls /api/resolve on Vercel (or falls back gracefully in dev).
 function useResolvedStream(originalUrl, originalEmbedType) {
-  const [resolved, setResolved] = useState(null);
+  const [resolved, setResolved] = useState(null); // { embedType, url, ytId? }
   const [resolving, setResolving] = useState(false);
 
   useEffect(() => {
-    if (originalEmbedType !== 'webpage' && originalEmbedType !== 'multi') {
+    // Only resolve webpage type — youtube and hls are already usable
+    if (originalEmbedType !== 'webpage') {
       setResolved({ embedType: originalEmbedType, url: originalUrl });
       return;
     }
@@ -122,11 +123,20 @@ function useResolvedStream(originalUrl, originalEmbedType) {
         const res = await fetch(endpoint, { signal: AbortSignal.timeout(12000) });
         if (!res.ok) throw new Error(`resolve API ${res.status}`);
         const data = await res.json();
+
         if (cancelled) return;
-        setResolved(data);
+
+        if (data.embedType === 'youtube' || data.embedType === 'hls') {
+          setResolved(data);
+        } else {
+          // Unavailable or unknown — keep original so we can show the fallback UI
+          setResolved({ embedType: 'unavailable', url: originalUrl });
+        }
       } catch (err) {
         console.warn('[CCTVPopup] resolve failed:', err.message);
-        if (!cancelled) setResolved({ embedType: 'unavailable', url: originalUrl });
+        if (!cancelled) {
+          setResolved({ embedType: 'unavailable', url: originalUrl });
+        }
       } finally {
         if (!cancelled) setResolving(false);
       }
@@ -138,85 +148,53 @@ function useResolvedStream(originalUrl, originalEmbedType) {
   return { resolved, resolving };
 }
 
-// Main popup
+// ─── Main popup ─────────────────────────────────────────────
 export default function CCTVPopup({ feature, onClose }) {
   const [status, setStatus] = useState('loading');
   const [camId] = useState(() => `CAM-${Math.random().toString(36).substr(2,6).toUpperCase()}`);
-  const [activeStream, setActiveStream] = useState(null);
-  const [activeStreamName, setActiveStreamName] = useState(null);
-  const [subResolving, setSubResolving] = useState(false);
 
   const p = feature.properties;
   const [lng, lat] = feature.geometry.coordinates;
   const coords = formatCoords(lng, lat);
   const flag = getFlag(p.country);
 
+  // Resolve webpage URLs to real streams via /api/resolve
   const { resolved, resolving } = useResolvedStream(p.url, p.embedType);
+
+  // Effective values to render
+  const effectiveEmbedType = resolved?.embedType ?? p.embedType;
+  const effectiveUrl = resolved?.url ?? p.url;
+  const effectiveYtId = resolved?.ytId ?? p.ytId;
+  const badge = getTypeBadge(effectiveEmbedType);
+
+  // Build the "open in new tab" URL
+  const openUrl = effectiveEmbedType === 'youtube' && effectiveYtId
+    ? `https://www.youtube.com/watch?v=${effectiveYtId}`
+    : p.url; // always point to original page for non-youtube
 
   const handleLoad = () => setStatus('live');
 
-  useEffect(() => {
-    setActiveStream(null);
-    setActiveStreamName(null);
-    setSubResolving(false);
-  }, [resolved]);
-
-  const loadSubCamera = useCallback(async (camUrl, camName) => {
-    let absoluteUrl = camUrl;
-    if (!camUrl.startsWith('http')) {
-      try {
-        const base = new URL(p.url);
-        absoluteUrl = new URL(camUrl, base).href;
-      } catch (e) {
-        absoluteUrl = camUrl;
-      }
-    }
-    setSubResolving(true);
-    setActiveStreamName(camName);
-    try {
-      const endpoint = `/api/resolve?url=${encodeURIComponent(absoluteUrl)}`;
-      const res = await fetch(endpoint, { signal: AbortSignal.timeout(12000) });
-      if (!res.ok) throw new Error(`resolve sub ${res.status}`);
-      const data = await res.json();
-      setActiveStream(data);
-    } catch (err) {
-      console.warn('[CCTVPopup] sub resolve failed:', err.message);
-      setActiveStream({ embedType: 'unavailable', url: absoluteUrl });
-    } finally {
-      setSubResolving(false);
-    }
-  }, [p.url]);
-
-  const effectiveStream = activeStream || resolved;
-  const effectiveEmbedType = effectiveStream?.embedType ?? p.embedType;
-  const effectiveUrl = effectiveStream?.url ?? p.url;
-  const effectiveYtId = effectiveStream?.ytId ?? p.ytId;
-  const badge = getTypeBadge(effectiveEmbedType);
-  const openUrl = getOpenUrl(p, effectiveYtId);
-
-  const isMultiMode = resolved?.embedType === 'multi' && !activeStream;
-  const hasMultiStreams = resolved?.multiStreams && resolved.multiStreams.length > 0;
-  const showMultiList = (isMultiMode || (hasMultiStreams && !activeStream)) && !subResolving;
-
   const statusLabel =
-    resolving || subResolving    ? 'RESOLVING STREAM...' :
+    resolving              ? 'RESOLVING STREAM...' :
     status === 'loading'   ? 'CONNECTING...' :
     status === 'live'      ? 'SIGNAL ACTIVE' :
                              'STREAM OFFLINE';
   const dotClass =
-    resolving || subResolving   ? 'loading' :
+    resolving              ? 'loading' :
     status === 'loading'   ? 'loading' :
     status === 'live'      ? ''        : 'offline';
 
   return (
     <div className="cctv-popup" onClick={e => e.stopPropagation()}>
+
+      {/* ── Header ── */}
       <div className="popup-header">
         <div className="popup-cam-info">
           <div className="popup-cam-id">⬡ {camId}</div>
-          <div className="popup-cam-name" title={activeStreamName || p.fullName || p.name}>
-            {flag} {activeStreamName || p.name}
+          <div className="popup-cam-name" title={p.fullName || p.name}>
+            {flag} {p.name}
           </div>
-          {!activeStreamName && p.fullName && p.fullName !== p.name && (
+          {p.fullName && p.fullName !== p.name && (
             <div className="popup-cam-location" style={{ fontSize:'10px', opacity:.7 }}>{p.fullName}</div>
           )}
           <div className="popup-cam-location">
@@ -224,119 +202,53 @@ export default function CCTVPopup({ feature, onClose }) {
           </div>
         </div>
         <div className="popup-actions">
-          {/* Open in new tab (direct) */}
-          {/*<a href={openUrl} target="_blank" rel="noopener noreferrer" className="popup-btn" title="Open in new tab">↗</a>*/}
+          <a href={openUrl} target="_blank" rel="noopener noreferrer" className="popup-btn" title="Open in new tab">↗</a>
           <button className="popup-btn close" onClick={onClose} title="Close">✕</button>
         </div>
       </div>
 
+      {/* ── Signal bar ── */}
       <div className="popup-signal">
         <div className={`signal-dot ${dotClass}`} />
         <span className="signal-label">{statusLabel}</span>
         <span className="signal-type-badge">{badge}</span>
       </div>
 
-      {(resolving || subResolving) && (
+      {/* ── Media ── */}
+      {resolving && (
         <div className="popup-media-area" style={{ display:'flex', alignItems:'center', justifyContent:'center', flexDirection:'column', gap:8 }}>
           <div style={{ fontSize:24, opacity:.5, animation:'spin 1.5s linear infinite' }}>⬡</div>
           <div className="popup-offline-text">RESOLVING STREAM...</div>
         </div>
       )}
 
-      {!resolving && !subResolving && effectiveEmbedType === 'youtube' && (
+      {!resolving && effectiveEmbedType === 'youtube' && (
         <YouTubeEmbed url={effectiveUrl} onLoad={handleLoad} />
       )}
-      {!resolving && !subResolving && effectiveEmbedType === 'hls' && (
+      {!resolving && effectiveEmbedType === 'hls' && (
         <HLSEmbed url={effectiveUrl} onStatus={s => setStatus(s)} />
       )}
-      {!resolving && !subResolving && effectiveEmbedType === 'webpage' && (
+      {!resolving && effectiveEmbedType === 'webpage' && (
         <WebpageEmbed url={effectiveUrl} onLoad={handleLoad} />
       )}
-      {!resolving && !subResolving && effectiveEmbedType === 'multi' && !activeStream && (
-        <div className="popup-media-area" style={{ display:'flex', alignItems:'center', justifyContent:'center', flexDirection:'column', gap:10, minHeight:'180px' }}>
-          <div style={{ fontSize:32, opacity:.25 }}>🎥</div>
-          <div className="popup-offline-text">MULTIPLE CAMERAS AVAILABLE</div>
-          <div style={{ fontSize:10, opacity:.4, textAlign:'center' }}>Select one from the list below</div>
-        </div>
-      )}
-      {!resolving && !subResolving && (effectiveEmbedType === 'unavailable' || effectiveEmbedType === 'unknown') && !showMultiList && (
+      {!resolving && (effectiveEmbedType === 'unavailable' || effectiveEmbedType === 'unknown' || !effectiveEmbedType) && (
         <div className="popup-media-area" style={{ display:'flex', alignItems:'center', justifyContent:'center', flexDirection:'column', gap:10 }}>
           <div style={{ fontSize:32, opacity:.25 }}>📡</div>
-          <div className="popup-offline-text">STREAM NOT PLAYABLE IN EMBED</div>
+          <div className="popup-offline-text">STREAM UNAVAILABLE IN BROWSER</div>
           <div style={{ fontSize:10, opacity:.4, textAlign:'center', padding:'0 12px' }}>
-            This website blocks embedded playback.<br/>
-            Please click the button below to open in a new tab.
+            This provider blocks embedded playback.<br/>Open the link below to watch externally.
           </div>
         </div>
       )}
 
-      {(showMultiList || (hasMultiStreams && !activeStream)) && (
-        <div className="popup-multi-list" style={{ padding: '8px 12px', borderTop: '1px solid rgba(0,200,255,0.1)', maxHeight: '200px', overflowY: 'auto' }}>
-          <div style={{ fontFamily: 'var(--font-mono)', fontSize: '9px', color: 'var(--accent-cyan)', marginBottom: '8px', letterSpacing: '1px' }}>
-            ⬡ AVAILABLE CAMERAS
-          </div>
-          {resolved?.multiStreams?.map((cam, idx) => (
-            <button
-              key={idx}
-              onClick={() => loadSubCamera(cam.url, cam.name)}
-              className="popup-multi-item"
-              style={{
-                display: 'flex',
-                alignItems: 'center',
-                gap: '8px',
-                width: '100%',
-                background: 'rgba(0,200,255,0.05)',
-                border: '1px solid rgba(0,200,255,0.15)',
-                padding: '6px 10px',
-                marginBottom: '6px',
-                fontFamily: 'var(--font-ui)',
-                fontSize: '12px',
-                color: 'var(--text-primary)',
-                cursor: 'pointer',
-                textAlign: 'left',
-                transition: 'all 0.1s ease',
-              }}
-              onMouseEnter={e => e.currentTarget.style.background = 'rgba(0,200,255,0.15)'}
-              onMouseLeave={e => e.currentTarget.style.background = 'rgba(0,200,255,0.05)'}
-            >
-              <span style={{ fontSize: '14px' }}>🎥</span>
-              <span style={{ flex: 1, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{cam.name}</span>
-              <span style={{ fontSize: '10px', opacity: 0.6 }}>↗</span>
-            </button>
-          ))}
-          {activeStream && (
-            <button
-              onClick={() => { setActiveStream(null); setActiveStreamName(null); }}
-              className="popup-multi-item"
-              style={{
-                marginTop: '6px',
-                background: 'rgba(255,45,85,0.1)',
-                borderColor: 'rgba(255,45,85,0.3)',
-                color: 'var(--accent-red)',
-              }}
-            >
-              ← BACK TO LIST
-            </button>
-          )}
-        </div>
-      )}
-
+      {/* ── Footer ── */}
       <div className="popup-footer">
         <span className="popup-coords">{coords}</span>
-        <button 
-          className="popup-open-btn" 
-          onClick={() => window.open(openUrl, '_blank')}
-        >
-          ↗ YENİ SEKME
-        </button>
+        <a href={openUrl} target="_blank" rel="noopener noreferrer" className="popup-open-btn">
+          ↗ OPEN STREAM
+        </a>
       </div>
 
-      <style>{`
-        @keyframes spin {
-          from { transform: rotate(0deg); }
-          to { transform: rotate(360deg); }
-        }
-      `}</style>
     </div>
   );
 }

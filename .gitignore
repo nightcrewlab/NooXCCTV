@@ -5,3 +5,12 @@ dist/
 .vercel
 *.log
 .DS_Store
+
+# Gereksiz / tool dosyaları (commit edilmesin)
+.claude/
+scripts/
+gitupdate.txt
+public/kocbey.json
+tsconfig.json
+tsconfig.node.json
+*.rar

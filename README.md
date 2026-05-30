@@ -1,6 +1,5 @@
 # 🌍 NooXCCTV — Global Surveillance Globe
-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
-pk.eyJ1Ijoibm9veHJpaSIsImEiOiJjbXBidGdubnEwMTNrMnJzYjFqc2ltOTg2In0.8N9W8DrKzdOgX6Om9DFLFQ
+
 Real-time CCTV & live stream viewer on an interactive 3D globe powered by Mapbox GL JS.
 
 ## ✨ Features

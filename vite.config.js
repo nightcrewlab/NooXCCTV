@@ -28,7 +28,7 @@ function apiResolveDevPlugin() {
         }
 
         try {
-          const result = await resolveWebcamUrl(url);
+          const result = await resolveWebcamUrl(url)
           if (result.reason === 'domain_not_allowed') {
             res.statusCode = 403
             res.end(JSON.stringify({ error: 'Domain not allowed' }))
