@@ -4,18 +4,42 @@
 
 import { useState, useEffect } from 'react';
 
-// Load custom cameras for map injection (base from JSON + user localStorage)
-function loadCustomCamerasAsFeatures() {
+// Load custom cameras (base from JSON file + user's local additions)
+async function loadAllCustomCamerasAsFeatures() {
   let features = [];
 
-  // 1. Base cameras from public/custom-cameras.json (committed to repo)
+  // 1. Load base cameras from /custom-cameras.json (committed to repo)
   try {
-    // Note: This is synchronous fallback. Real loading happens via useCustomCameras hook.
-    // For initial map render we rely on the hook in most cases.
-    // We keep a small sync path for safety.
-  } catch {}
+    const res = await fetch('/custom-cameras.json', { signal: AbortSignal.timeout(8000) });
+    if (res.ok) {
+      const baseList = await res.json();
+      if (Array.isArray(baseList)) {
+        const baseFeatures = baseList.map((cam, i) => ({
+          type: 'Feature',
+          geometry: { type: 'Point', coordinates: [Number(cam.lng), Number(cam.lat)] },
+          properties: {
+            id: `base-${i}`,
+            name: cam.name || 'Custom Camera',
+            fullName: cam.name || '',
+            url: `https://www.youtube.com/embed/${cam.ytId}?autoplay=1&mute=1`,
+            embedType: 'youtube',
+            ytId: cam.ytId,
+            country: (cam.country || 'XX').toUpperCase().slice(0, 2),
+            environment: 'custom',
+            sceneType: 'project-base',
+            sourceFamily: 'project-custom',
+            status: 'base',
+            qualityTier: 'user'
+          }
+        }));
+        features = [...features, ...baseFeatures];
+      }
+    }
+  } catch (e) {
+    console.warn('[useStreams] Could not load base custom-cameras.json:', e.message);
+  }
 
-  // 2. User additions from localStorage
+  // 2. Load user's personal additions from localStorage
   try {
     const raw = localStorage.getItem('nooxcctv_custom_cameras_v1');
     if (raw) {
@@ -141,8 +165,8 @@ function injectCuratedCameras(base) {
   };
 }
 
-function injectCustomCameras(base) {
-  const customs = loadCustomCamerasAsFeatures();
+async function injectCustomCameras(base) {
+  const customs = await loadAllCustomCamerasAsFeatures();
   if (!customs.length || !base?.features) return base;
 
   const seen = new Set(
@@ -323,7 +347,7 @@ export function useStreams() {
           if (raw?.features?.length && !cancelled) {
             let processed = processRaw(raw);
             processed = injectCuratedCameras(processed);
-            processed = injectCustomCameras(processed);
+            processed = await injectCustomCameras(processed);
             processed = filterYouTubeOnly(processed);
             const curated = processed.meta?.curatedAdded || 0;
             const custom = processed.meta?.customAdded || 0;
@@ -348,7 +372,7 @@ export function useStreams() {
           const raw = await res.json();
           if (raw?.features?.length && !cancelled) {
             let withCurated = injectCuratedCameras(raw);
-            withCurated = injectCustomCameras(withCurated);
+            withCurated = await injectCustomCameras(withCurated);
             withCurated = filterYouTubeOnly(withCurated);
             const curated = withCurated.meta?.curatedAdded || 0;
             const custom = withCurated.meta?.customAdded || 0;
@@ -370,7 +394,7 @@ export function useStreams() {
       if (!cancelled) {
         console.warn('[useStreams] Using hardcoded fallback (YouTube only)');
         let fb = buildFallback();
-        fb = injectCustomCameras(fb);
+        fb = await injectCustomCameras(fb);
         fb = filterYouTubeOnly(fb);
         setGeojson(fb);
         setCount(fb.features.length);
