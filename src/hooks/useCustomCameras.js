@@ -1,10 +1,12 @@
 // src/hooks/useCustomCameras.js
-// Manages user-added custom YouTube cameras persisted in localStorage.
-// Works fully on Vercel (no backend needed). "Ben kendim" use case.
+// - Base cameras come from public/custom-cameras.json (committed to repo, always present)
+// - User additions are stored in localStorage (personal, survives refresh)
+// Works fully on Vercel.
 
 import { useState, useEffect, useCallback } from 'react';
 
 const STORAGE_KEY = 'nooxcctv_custom_cameras_v1';
+const BASE_JSON_URL = '/custom-cameras.json';
 
 function extractYouTubeId(input) {
   if (!input) return null;
@@ -48,29 +50,60 @@ function saveToStorage(list) {
 }
 
 export function useCustomCameras() {
-  const [customCameras, setCustomCameras] = useState([]);
+  const [baseCameras, setBaseCameras] = useState([]);
+  const [userCameras, setUserCameras] = useState([]);
 
-  // Load on mount + listen for external changes (other tabs or our events)
+  // Load base from JSON file + user additions from localStorage
   useEffect(() => {
-    setCustomCameras(loadFromStorage());
+    let cancelled = false;
+
+    // Load base cameras from public/custom-cameras.json
+    fetch(BASE_JSON_URL)
+      .then(res => res.ok ? res.json() : [])
+      .then(data => {
+        if (!cancelled && Array.isArray(data)) {
+          const normalized = data.map((c, idx) => ({
+            id: `base-${idx}`,
+            name: c.name,
+            lat: Number(c.lat),
+            lng: Number(c.lng),
+            ytId: c.ytId,
+            country: (c.country || 'XX').toUpperCase().slice(0, 2),
+            embedUrl: `https://www.youtube.com/embed/${c.ytId}?autoplay=1&mute=1`,
+            isBase: true
+          }));
+          setBaseCameras(normalized);
+        }
+      })
+      .catch(() => {});
+
+    // Load user additions from localStorage
+    const user = loadFromStorage();
+    setUserCameras(user);
 
     const onStorage = (e) => {
       if (e.key === STORAGE_KEY) {
-        setCustomCameras(loadFromStorage());
+        setUserCameras(loadFromStorage());
       }
     };
     const onCustomEvent = () => {
-      setCustomCameras(loadFromStorage());
+      setUserCameras(loadFromStorage());
     };
 
     window.addEventListener('storage', onStorage);
     window.addEventListener('custom-cameras-changed', onCustomEvent);
+
     return () => {
+      cancelled = true;
       window.removeEventListener('storage', onStorage);
       window.removeEventListener('custom-cameras-changed', onCustomEvent);
     };
   }, []);
 
+  // Combined list for map (base first, then user additions)
+  const customCameras = [...baseCameras, ...userCameras];
+
+  // Add only goes to localStorage (user additions)
   const addCustomCamera = useCallback((camera) => {
     const id = `custom-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
     const newCam = {
@@ -91,29 +124,29 @@ export function useCustomCameras() {
       throw new Error('Geçerli enlem ve boylam girin');
     }
 
-    // Build the embed url like the rest of the app
     newCam.embedUrl = `https://www.youtube.com/embed/${newCam.ytId}?autoplay=1&mute=1`;
 
-    const updated = [...customCameras, newCam];
-    setCustomCameras(updated);
+    const updated = [...userCameras, newCam];
+    setUserCameras(updated);
     saveToStorage(updated);
     return newCam;
-  }, [customCameras]);
+  }, [userCameras]);
 
+  // Remove only works on user-added cameras (base cameras from JSON cannot be deleted from UI)
   const removeCustomCamera = useCallback((id) => {
-    const updated = customCameras.filter(c => c.id !== id);
-    setCustomCameras(updated);
+    const updated = userCameras.filter(c => c.id !== id);
+    setUserCameras(updated);
     saveToStorage(updated);
-  }, [customCameras]);
+  }, [userCameras]);
 
   const clearAll = useCallback(() => {
-    setCustomCameras([]);
+    setUserCameras([]);
     saveToStorage([]);
   }, []);
 
-  // Convert to GeoJSON Feature format (for merging into globe data)
+  // Convert to GeoJSON Feature format (used by useStreams)
   const getAsFeatures = useCallback(() => {
-    return customCameras.map((cam, i) => ({
+    return customCameras.map((cam) => ({
       type: 'Feature',
       geometry: {
         type: 'Point',
@@ -128,22 +161,37 @@ export function useCustomCameras() {
         ytId: cam.ytId,
         country: cam.country,
         environment: 'custom',
-        sceneType: 'user-added',
-        sourceFamily: 'user-custom',
-        status: 'custom',
-        qualityTier: 'user',
-        addedAt: cam.addedAt
+        sceneType: cam.isBase ? 'project-base' : 'user-added',
+        sourceFamily: cam.isBase ? 'project-custom' : 'user-custom',
+        status: cam.isBase ? 'base' : 'custom',
+        qualityTier: 'user'
       }
     }));
   }, [customCameras]);
 
+  // Export only user's local additions as clean JSON
+  const exportUserCameras = useCallback(() => {
+    const exportData = userCameras.map(c => ({
+      name: c.name,
+      lat: c.lat,
+      lng: c.lng,
+      ytId: c.ytId,
+      country: c.country
+    }));
+    return JSON.stringify(exportData, null, 2);
+  }, [userCameras]);
+
   return {
     customCameras,
+    baseCameras,
+    userCameras,
     addCustomCamera,
     removeCustomCamera,
     clearAll,
     getAsFeatures,
-    count: customCameras.length
+    exportUserCameras,
+    count: customCameras.length,
+    userCount: userCameras.length
   };
 }
 

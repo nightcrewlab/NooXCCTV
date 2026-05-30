@@ -7,11 +7,14 @@ import { useCustomCameras, extractYouTubeId } from '../hooks/useCustomCameras';
 
 export default function SettingsModal({ isOpen, onClose }) {
   const {
-    customCameras,
+    baseCameras,
+    userCameras,
     addCustomCamera,
     removeCustomCamera,
     clearAll,
-    count
+    exportUserCameras,
+    count,
+    userCount
   } = useCustomCameras();
 
   const [name, setName] = useState('');
@@ -203,20 +206,45 @@ export default function SettingsModal({ isOpen, onClose }) {
             </form>
           </div>
 
-          {/* Existing custom cameras list */}
+          {/* Project Base Cameras (from custom-cameras.json - always present) */}
           <div className="settings-section">
             <div className="section-title">
-              KAYITLI ÖZEL KAMERALARIN <span className="count">({count})</span>
+              PROJE TABANI KAMERALAR <span className="count">({baseCameras.length})</span>
+            </div>
+            <div className="base-note">
+              Bu kameralar <code>public/custom-cameras.json</code> dosyasından geliyor. Git'te kalıcıdır.
             </div>
 
-            {count === 0 ? (
+            <div className="custom-list">
+              {baseCameras.map(cam => (
+                <div key={cam.id} className="custom-item base-item">
+                  <div className="custom-info">
+                    <div className="custom-name">{cam.name}</div>
+                    <div className="custom-meta">
+                      {cam.country} • {cam.lat.toFixed(4)}, {cam.lng.toFixed(4)}
+                    </div>
+                    <div className="custom-url">youtube.com/embed/{cam.ytId}</div>
+                  </div>
+                  <div className="base-badge">BASE</div>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          {/* User's personal additions */}
+          <div className="settings-section">
+            <div className="section-title">
+              SENİN EKLEDİĞİN KAMERALAR <span className="count">({userCount})</span>
+            </div>
+
+            {userCount === 0 ? (
               <div className="empty-state">
-                Henüz özel kamera eklemedin.<br />
-                Yukarıdaki formu kullanarak istediğin YouTube live'ları haritaya sabitleyebilirsin.
+                Henüz kendi kameranı eklemedin.<br />
+                Yukarıdaki formla yeni kamera ekleyebilirsin (sadece senin tarayıcında saklanır).
               </div>
             ) : (
               <div className="custom-list">
-                {customCameras.map(cam => (
+                {userCameras.map(cam => (
                   <div key={cam.id} className="custom-item">
                     <div className="custom-info">
                       <div className="custom-name">{cam.name}</div>
@@ -224,9 +252,7 @@ export default function SettingsModal({ isOpen, onClose }) {
                         {cam.country} • {cam.lat.toFixed(4)}, {cam.lng.toFixed(4)}
                         <span className="added"> • {formatDate(cam.addedAt)}</span>
                       </div>
-                      <div className="custom-url">
-                        youtube.com/embed/{cam.ytId}
-                      </div>
+                      <div className="custom-url">youtube.com/embed/{cam.ytId}</div>
                     </div>
                     <button
                       className="btn-delete"
@@ -240,11 +266,25 @@ export default function SettingsModal({ isOpen, onClose }) {
               </div>
             )}
 
-            {count > 0 && (
-              <button className="btn-danger" onClick={handleClearAll}>
-                TÜM ÖZEL KAMERALARI SİL
+            <div style={{ display: 'flex', gap: '8px', marginTop: '8px' }}>
+              {userCount > 0 && (
+                <button className="btn-danger" onClick={handleClearAll} style={{ flex: 1 }}>
+                  TÜM KİŞİSEL KAMERALARIMI SİL
+                </button>
+              )}
+              <button
+                className="btn-primary"
+                onClick={() => {
+                  const json = exportUserCameras();
+                  navigator.clipboard.writeText(json).then(() => {
+                    alert('Kişisel kameraların JSON olarak kopyalandı! (İstersen bir dosyaya yapıştırıp kaydedebilirsin)');
+                  });
+                }}
+                disabled={userCount === 0}
+              >
+                KİŞİSEL KAMERALARIMI DIŞA AKTAR (JSON)
               </button>
-            )}
+            </div>
           </div>
         </div>
 

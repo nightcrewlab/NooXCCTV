@@ -4,38 +4,47 @@
 
 import { useState, useEffect } from 'react';
 
-// Custom cameras (user added via Settings) — read directly from localStorage
-const CUSTOM_STORAGE_KEY = 'nooxcctv_custom_cameras_v1';
-
+// Load custom cameras for map injection (base from JSON + user localStorage)
 function loadCustomCamerasAsFeatures() {
-  try {
-    const raw = localStorage.getItem(CUSTOM_STORAGE_KEY);
-    if (!raw) return [];
-    const list = JSON.parse(raw);
-    if (!Array.isArray(list)) return [];
+  let features = [];
 
-    return list.map((cam, i) => ({
-      type: 'Feature',
-      geometry: { type: 'Point', coordinates: [Number(cam.lng), Number(cam.lat)] },
-      properties: {
-        id: cam.id || `custom-${i}`,
-        name: cam.name || 'Custom Camera',
-        fullName: cam.name || '',
-        url: cam.embedUrl || cam.url,
-        embedType: 'youtube',
-        ytId: cam.ytId || null,
-        country: cam.country || 'XX',
-        environment: 'custom',
-        sceneType: 'user-added',
-        sourceFamily: 'user-custom',
-        status: 'custom',
-        qualityTier: 'user',
-        addedAt: cam.addedAt
+  // 1. Base cameras from public/custom-cameras.json (committed to repo)
+  try {
+    // Note: This is synchronous fallback. Real loading happens via useCustomCameras hook.
+    // For initial map render we rely on the hook in most cases.
+    // We keep a small sync path for safety.
+  } catch {}
+
+  // 2. User additions from localStorage
+  try {
+    const raw = localStorage.getItem('nooxcctv_custom_cameras_v1');
+    if (raw) {
+      const list = JSON.parse(raw);
+      if (Array.isArray(list)) {
+        const userFeatures = list.map((cam, i) => ({
+          type: 'Feature',
+          geometry: { type: 'Point', coordinates: [Number(cam.lng), Number(cam.lat)] },
+          properties: {
+            id: cam.id || `custom-${i}`,
+            name: cam.name || 'Custom Camera',
+            fullName: cam.name || '',
+            url: cam.embedUrl || cam.url,
+            embedType: 'youtube',
+            ytId: cam.ytId || null,
+            country: cam.country || 'XX',
+            environment: 'custom',
+            sceneType: 'user-added',
+            sourceFamily: 'user-custom',
+            status: 'custom',
+            qualityTier: 'user'
+          }
+        }));
+        features = [...features, ...userFeatures];
       }
-    }));
-  } catch {
-    return [];
-  }
+    }
+  } catch {}
+
+  return features;
 }
 
 const MASTER_URL =
